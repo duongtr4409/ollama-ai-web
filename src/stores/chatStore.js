@@ -40,7 +40,7 @@ const useChatStore = create(
 
       // AI Integration methods
       sendMessage: async (content) => {
-        const { messages, apiKey } = get();
+        const { messages } = get();
         
         // Add user message
         const userMessage = {
@@ -56,18 +56,25 @@ const useChatStore = create(
         }));
 
         try {
-          // Choose AI provider based on available configuration
-          let response;
-          if (apiKey && apiKey.startsWith('sk-')) {
-            response = await get().sendToOpenAI(content, messages);
-          } else {
-            response = await get().sendToOllama(content, messages);
+          // Call the API endpoint
+          const response = await fetch("http://localhost:8081/api/v1/ollama-chat/chat", {
+            method: "POST",
+            headers: {
+              "Content-Type": "text/plain",
+            },
+            body: content,
+          });
+
+          if (!response.ok) {
+            throw new Error(`API error: ${response.status}`);
           }
+
+          const responseText = await response.text();
 
           // Add assistant message
           const assistantMessage = {
             role: 'assistant',
-            content: response,
+            content: responseText,
             timestamp: new Date().toISOString(),
           };
 
@@ -77,68 +84,23 @@ const useChatStore = create(
           }));
         } catch (error) {
           console.error('Error sending message:', error);
-          set({
-            error: error.message || 'Failed to send message',
-            isLoading: false,
+          set((state) => {
+            const assistantMessage = {
+              role: 'assistant',
+              content: "Sorry, there was an error processing your request. Please try again.",
+              timestamp: new Date().toISOString(),
+            };
+
+            return {
+              messages: [...state.messages, { ...assistantMessage, id: Date.now() + 2 }],
+              error: error.message || 'Failed to send message',
+              isLoading: false,
+            };
           });
         }
       },
 
-      // OpenAI Integration
-      sendToOpenAI: async (content, previousMessages) => {
-        const { apiKey } = get();
-        
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model: 'gpt-3.5-turbo',
-            messages: [
-              ...previousMessages.slice(-10), // Keep last 10 messages for context
-              { role: 'user', content },
-            ],
-            max_tokens: 1000,
-            temperature: 0.7,
-          }),
-        });
 
-        if (!response.ok) {
-          throw new Error(`OpenAI API error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        return data.choices[0].message.content;
-      },
-
-      // Ollama Integration (Local LLM)
-      sendToOllama: async (content, previousMessages) => {
-        try {
-          const response = await fetch('http://localhost:11434/api/generate', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              model: 'llama2', // or any other model you have installed
-              prompt: content,
-              stream: false,
-            }),
-          });
-
-          if (!response.ok) {
-            throw new Error('Ollama service not available. Please ensure Ollama is running.');
-          }
-
-          const data = await response.json();
-          return data.response;
-        } catch (error) {
-          // Fallback to mock response if Ollama is not available
-          return get().getMockResponse(content);
-        }
-      },
 
       // Mock response for development/fallback
       getMockResponse: (content) => {
